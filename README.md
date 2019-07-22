@@ -16,4 +16,4 @@ Automated UPS management system where it will monitor UPS status using NUT and p
 * Experience with YAML configuration. Check [here](https://gettaurus.org/docs/YAMLTutorial/) to learn on how to use YAML.
 
 ## Donate
-I maintain this project during my free time and any donations would help me continue this project! I accept donations via PayPal through [here](paypal.me/adambro).
+I maintain this project during my free time and any donations would help me continue this project! I accept donations via PayPal through [here](https://paypal.me/adambro).
