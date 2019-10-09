@@ -1,0 +1,47 @@
+general:
+    name: UPS
+    nut_name: UPS
+    log_level: 0
+    promtheus_exporter:
+        enable: true
+        port: 9100
+    alerts:
+        triggers:
+            battery_status: true
+            server_unreachable: true
+            server_shutting_down: true
+        smtp:
+            enabled: true
+            host: mail.example.com
+            port: 25
+            user: from@example.com
+            password: PASSWORD
+            to_address: to@example.com
+        pushover:
+            enabled: false
+            token: TOKEN
+            user: USER
+            devices: DEVICE
+            priority: 1
+        slack:
+            enabled: false
+            webhook_url: 'https://hooks.slack.com/services/your/slack/URL'
+            username: USER
+            channel: '#CHANNEL'
+            icon: ':sushi:'
+
+hosts:
+    host1.example.com:
+        port: 22
+        type: ssh
+        user: USER
+        runtime_limit: 10m
+        commands:
+        - 'poweroff'
+    host2.example.com:
+        port: 22
+        type: ssh
+        user: USER
+        runtime_limit: 5m
+        commands:
+        - 'shutdown -h'
