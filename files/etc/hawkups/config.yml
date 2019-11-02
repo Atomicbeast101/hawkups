@@ -2,16 +2,21 @@ general:
     name: UPS
     nut_name: UPS
     log_level: 0
+    ssh_private_key: /path/to/id_rsa
     promtheus_exporter:
         enable: true
         port: 9100
+    host_checkup:
+        interval: 30s
     alerts:
         triggers:
-            battery_status: true
-            server_unreachable: true
-            server_shutting_down: true
+            unexpected_error: true
+            host_unreachable: true
+            host_connection_fail: true
+            ups_status_change: true
+            host_turned_off: true
         smtp:
-            enabled: true
+            enabled: false
             host: mail.example.com
             port: 25
             user: from@example.com
@@ -31,17 +36,22 @@ general:
             icon: ':sushi:'
 
 hosts:
-    host1.example.com:
+    esxi.example.com:
         port: 22
-        type: ssh
-        user: USER
+        type: unix
+        username: USER
         runtime_limit: 10m
         commands:
         - 'poweroff'
-    host2.example.com:
+    linux.example.com:
         port: 22
-        type: ssh
-        user: USER
+        type: unix
+        username: USER
         runtime_limit: 5m
         commands:
         - 'shutdown -h'
+    windowshost1.example.com:
+        type: windows
+        username: USER
+        password: 
+        runtime_limit: 15m

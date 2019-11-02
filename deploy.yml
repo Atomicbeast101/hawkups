@@ -1,0 +1,105 @@
+---
+- name: Setup HawkUPS system
+  hosts: ups.example.com
+  any_errors_fatal: true
+  vars:
+    apt_packages:
+    - python-pip
+    - python3-pip
+    - nut
+    pip3_packages:
+    - prometheus_client
+    - slackweb
+    - requests
+    - pyyaml
+    - paramiko
+    dirs:
+    - /opt/hawkups/
+    - /etc/hawkups/
+  tasks:
+    - name: Update packages
+      apt:
+        name: "*"
+        state: latest
+        update_cache: yes
+      
+    - name: Install apt packages
+      apt:
+        name: "{{ apt_packages }}"
+        update_cache: yes
+
+    - name: Install python3 packages
+      pip:
+        name: "{{ pip3_packages }}"
+        executable: pip3
+    
+    - name: Create necessary directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      with_items: "{{ dirs }}"
+
+    - name: Configure nut files
+      copy:
+        src: "files{{ item }}"
+        dest: "{{ item }}"
+        owner: root
+        group: nut
+        mode: 0640
+      with_items:
+      - /etc/nut/nut.conf
+      - /etc/nut/ups.conf
+      register: nut_config
+
+    - name: Start nut-server service
+      systemd:
+        name: nut-server
+        state: restart
+        enabled: yes
+      when: nut_config.changed
+
+    - name: Test upsc command
+      shell: upsc UPS
+      register: upsc_results
+      ignore_errors: True
+    
+    - name: Fail if upsc command doesnt work
+      fail: Unable to query UPS statistics from upsc command
+      when: "'ups.status' not in upsc_results.stderr"
+
+    - name: Copy HawkUPS files over
+      copy:
+        src: "files{{ item }}"
+        dest: "{{ item }}"
+        owner: root
+        group: root
+        mode: 0744
+      with_items:
+      - /opt/hawkups/app.py
+      - /etc/hawkups/config.yml
+      - /etc/systemd/system/hawkups.service
+      register: hawkups_files
+    
+    - name: Change file permissions for /etc/hawkups/config.yml & /etc/systemd/system/hawkups.service
+      file:
+        path: "{{ item }}"
+        owner: root
+        group: root
+        mode: 0644
+      with_items:
+      - /etc/hawkups/config.yml
+      - /etc/systemd/system/hawkups.service
+
+    - name: Reload systemd service
+      systemd:
+        daemon_reload: yes
+
+    - name: Start HawkUPS service
+      systemd:
+        name: hawkups
+        state: restarted
+        enabled: yes
+      when: hawkups_files.changed
