@@ -1,6 +1,6 @@
 ---
 - name: Setup HawkUPS system
-  hosts: ups.potato.lab
+  hosts: ups_manager
   any_errors_fatal: true
   vars:
     apt_packages:
