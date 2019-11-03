@@ -1,6 +1,6 @@
 ---
 - name: Setup HawkUPS system
-  hosts: ups.example.com
+  hosts: ups.potato.lab
   any_errors_fatal: true
   vars:
     apt_packages:
@@ -13,6 +13,7 @@
     - requests
     - pyyaml
     - paramiko
+    - wmi
     dirs:
     - /opt/hawkups/
     - /etc/hawkups/
@@ -57,7 +58,7 @@
     - name: Start nut-server service
       systemd:
         name: nut-server
-        state: restart
+        state: restarted
         enabled: yes
       when: nut_config.changed
 
@@ -67,7 +68,8 @@
       ignore_errors: True
     
     - name: Fail if upsc command doesnt work
-      fail: Unable to query UPS statistics from upsc command
+      fail: 
+        msg: Unable to query UPS statistics from upsc command
       when: "'ups.status' not in upsc_results.stderr"
 
     - name: Copy HawkUPS files over
