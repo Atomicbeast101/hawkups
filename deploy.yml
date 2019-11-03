@@ -61,16 +61,13 @@
         state: restarted
         enabled: yes
       when: nut_config.changed
+    
+    - name: Manually start upsdrvctl service
+      command: upsdrvctl start
 
     - name: Test upsc command
       shell: upsc UPS
       register: upsc_results
-      ignore_errors: True
-    
-    - name: Fail if upsc command doesnt work
-      fail: 
-        msg: Unable to query UPS statistics from upsc command
-      when: "'ups.status' not in upsc_results.stderr"
 
     - name: Copy HawkUPS files over
       copy:
@@ -102,9 +99,6 @@
         owner: root
         group: root
         mode: 0644
-    
-    - name: Manually start upsdrvctl service
-      command: upsdrvctl start
 
     - name: Reload systemd service
       systemd:
