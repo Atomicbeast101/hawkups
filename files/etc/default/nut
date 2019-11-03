@@ -1,0 +1,3 @@
+# /etc/default/nut
+START_UPSD=yes
+START_UPSMON=yes

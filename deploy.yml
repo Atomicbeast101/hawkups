@@ -94,6 +94,17 @@
       with_items:
       - /etc/hawkups/config.yml
       - /etc/systemd/system/hawkups.service
+    
+    - name: Start NUT at startup
+      copy:
+        src: files/etc/default/nut
+        dest: /etc/default/nut
+        owner: root
+        group: root
+        mode: 0644
+    
+    - name: Manually start upsdrvctl service
+      command: upsdrvctl start
 
     - name: Reload systemd service
       systemd:
