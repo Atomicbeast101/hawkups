@@ -215,7 +215,8 @@ class Host:
             try:
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.host, username=self.user)
+                key = paramiko.RSAKey.from_private_key_file(cfg_data['general']['private_rsa_key'])
+                ssh.connect(self.host, username=self.user, pkey=key)
                 return True
             except Exception:
                 notify(1, 'host_connection_fail', 'Unable to access {} host!'.format(self.host), 'Unable to access {} host via SSH! Please check to make sure the host is reachable from the host running HawkUPS system. Please check logs for more info.'.format(self.host))
@@ -237,7 +238,8 @@ class Host:
             try:
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.host, username=self.user)
+                key = paramiko.RSAKey.from_private_key_file(cfg_data['general']['private_rsa_key'])
+                ssh.connect(self.host, username=self.user, pkey=key)
                 ssh.exec_command('; '.join(self.cmds))
                 ssh.close()
                 self.turned_off = True

@@ -2,6 +2,7 @@ general:
     name: UPS
     nut_name: UPS
     log_level: 0
+    private_rsa_key: /root/.ssh/id_rsa
     prometheus_exporter:
         enable: true
         port: 9100
