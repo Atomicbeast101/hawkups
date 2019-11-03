@@ -309,7 +309,8 @@ class UPSChecker(threading.Thread):
         threading.Thread.__init__(self)
         self.interval = 1 # Interval every second
         self.notify_of_ups_status = False
-        self.get_brand_model = False
+        self.brand_set = False
+        self.model_set = False
         self.metrics = {
             'hawkups_ups_charge': prometheus_client.Gauge('hawkups_ups_charge', 'Current UPS\'s battery charge in percentage (%)'),
             'hawkups_ups_runtime': prometheus_client.Gauge('hawkups_ups_runtime', 'Current battery runtime in seconds.'),
@@ -317,7 +318,7 @@ class UPSChecker(threading.Thread):
             'hawkups_ups_load': prometheus_client.Gauge('hawkups_ups_load', 'Current UPS load in percentage (%).'),
             'hawkups_ups_realpower': prometheus_client.Gauge('hawkups_ups_realpower', 'UPS\'s realpower nominal. Used to calculate watts usage ((hawkups_ups_load / 100) * hawkups_ups_realpower) = watts'),
             'hawkups_ups_status': prometheus_client.Gauge('hawkups_ups_status', 'Current status of the UPS (0=On Power Grid,1=On Battery Mode).'),
-            'hawkups_ups_brand': prometheus_client.Gauge('hawkups_ups_brand', 'Brand of the UPS', ['manufacturer']),
+            'hawkups_ups_brand': prometheus_client.Gauge('hawkups_ups_brand', 'Brand of the UPS', ['brand']),
             'hawkups_ups_model': prometheus_client.Gauge('hawkups_ups_model', 'Model of the UPS', ['model'])
         }    
     
@@ -352,8 +353,6 @@ class UPSChecker(threading.Thread):
                 stderr=subprocess.PIPE
             )
             output = int(process.stdout.readline().decode().strip())
-            if cfg_data['general']['prometheus_exporter']['enable']:
-                self.metrics['hawkups_ups_runtime'].set(output)
             return output
         except Exception:
             notify(2, 'unexpected_error', 'Error while retrieving UPS runtime status!', 'Unexpected error while trying to retrieve runtime from the UPS via upsc! Please see logs for more info.')
@@ -369,27 +368,33 @@ class UPSChecker(threading.Thread):
                     stdout=subprocess.PIPE, 
                     stderr=subprocess.PIPE
                 )
-                for line in process.stdout.readline().decode().strip():
-                    if line.startswith('ups.load'):
-                        output = int(line.replace('ups.load: '))
+                for line in process.stdout.readlines():
+                    line = line.strip().decode()
+                    if line.startswith('ups.load:'):
+                        output = int(line.replace('ups.load: ', ''))
                         self.metrics['hawkups_ups_load'].set(output)
-                    elif line.startswith('ups.realpower.nominal'):
-                        output = int(line.replace('ups.realpower.nominal: '))
+                    elif line.startswith('ups.realpower.nominal:'):
+                        output = int(line.replace('ups.realpower.nominal: ', ''))
                         self.metrics['hawkups_ups_realpower'].set(output)
-                    elif line.startswith('battery.charge'):
-                        output = int(line.replace('battery.charge: '))
+                    elif line.startswith('battery.charge:'): # Currently doesn't work for some reason
+                        output = int(line.replace('battery.charge: ', ''))
                         self.metrics['hawkups_ups_charge'].set(output)
-                    elif line.startswith('input.voltage'):
-                        output = float(line.replace('input.voltage: '))
+                    elif line.startswith('battery.runtime:'):
+                        output = int(line.replace('battery.runtime: ', ''))
+                        self.metrics['hawkups_ups_runtime'].set(output)
+                    elif line.startswith('input.voltage:'):
+                        output = float(line.replace('input.voltage: ', ''))
                         self.metrics['hawkups_ups_input_voltage'].set(output)
-                    if not self.get_brand_model:
-                        if line.startswith('ups.mfr'):
-                            output = line.replace('ups.mfr: ')
+                    elif line.startswith('ups.mfr:'):
+                        if not self.brand_set:
+                            output = line.replace('ups.mfr: ', '')
                             self.metrics['hawkups_ups_brand'].labels(brand=output).set(1)
-                        elif line.startswith('ups.model'):
-                            output = line.replace('ups.model: ')
+                            self.brand_set = True
+                    elif line.startswith('ups.model:'):
+                        if not self.model_set:
+                            output = line.replace('ups.model: ', '')
                             self.metrics['hawkups_ups_model'].labels(model=output).set(1)
-                        self.get_brand_model = True
+                            self.model_set = True
         except Exception:
             notify(2, 'unexpected_error', 'Error while retrieving other UPS statistics!', 'Unexpected error while trying to retrieve other statistics from UPS via upsc! Please see logs for more info.')
             log(2, 'Unexpected error while trying to retrieve other statistics from UPS via upsc! Reason:\n{}'.format(traceback.print_exc()))
