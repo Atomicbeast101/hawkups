@@ -13,7 +13,9 @@
     - requests
     - pyyaml
     - paramiko
-    - wmi
+    - wmi-client-wrapper-py3
+    - wrapper
+    - barcodenumber
     dirs:
     - /opt/hawkups/
     - /etc/hawkups/

@@ -1,4 +1,5 @@
 #### Imports ####
+import wmi_client_wrapper as wmi
 import prometheus_client
 import subprocess
 import threading
@@ -13,7 +14,6 @@ import time
 import yaml
 import sys
 import ssl
-import wmi
 import os
 
 #### Check for config file path ####
@@ -25,24 +25,13 @@ if not sys.argv[1]:
 # Config
 cfg_data = None
 cfg_hosts = list()
-# Prometheus Exporter
-prometheus_metrics = {
-    'hawkups_host_status': prometheus_client.Gauge('hawkups_host_status', 'Host is reachable (0=False/1=True/2=PoweredOff)', ['host']),
-    'hawkups_ups_charge': prometheus_client.Gauge('hawkups_ups_charge', 'Current battery charge in percentage (%).'),
-    'hawkups_ups_runtime': prometheus_client.Gauge('hawkups_ups_runtime', 'Current battery runtime in seconds.'),
-    'hawkups_ups_input_voltage': prometheus_client.Gauge('hawkups_ups_input_voltage', 'Current voltage input in volts.'),
-    'hawkups_ups_load': prometheus_client.Gauge('hawkups_ups_load', 'Current UPS load in percentage (%).'),
-    'hawkups_ups_realpower': prometheus_client.Gauge('hawkups_ups_realpower', 'UPS\'s realpower nominal. Used to calculate watts usage ((hawkups_ups_load / 100) * hawkups_ups_realpower) = watts'),
-    'hawkups_ups_status': prometheus_client.Gauge('hawkups_ups_status', 'Current status of the UPS (0=On Power Grid,1=On Battery Mode).'),
-    'hawkups_ups_brand': prometheus_client.Gauge('hawkups_ups_brand', 'Brand of the UPS', ['manufacturer']),
-    'hawkups_ups_model': prometheus_client.Gauge('hawkups_ups_model', 'Model of the UPS', ['model'])
-}
 # Other
 LEVEL = {
     0: 'INFO',
     1: 'WARN',
     2: 'ERROR'
 }
+SECONDS_PER_UNIT = {"s": 1, "m": 60, "h": 3600}
 TEXT_TEMPLATE = '''Systems Administrator,
 {}
 Thank You,
@@ -67,23 +56,27 @@ def log(_level, _message):
     if _level >= cfg_data['general']['log_level']:
         print('{:^5} | {}'.format(LEVEL[_level], _message), flush=True)
 
+# Convert human readable time to seconds
+def convert_to_seconds(_time):
+    return int(_time[:-1]) * SECONDS_PER_UNIT[_time[-1]]
+
 # Load Configuration
 def load_config(_config_file):
     global cfg_data, cfg_hosts
     with open(_config_file, 'r') as f:
         cfg_data = yaml.safe_load(f)
         for host in cfg_data['hosts']:
-            if ['type', 'runtime_limit'] in cfg_data['hosts'][host]:
+            if 'type' and 'runtime_limit' in cfg_data['hosts'][host]:
                 # SSH based connections (Linux/Nimble/ESXi/Synology/etc...)
                 if cfg_data['hosts'][host]['type'].lower() == 'unix':
-                    if ['port', 'username', 'commands'] in cfg_data['hosts'][host]:
+                    if 'port' and 'username' and 'commands' in cfg_data['hosts'][host]:
                         cfg_hosts.append(Host(
                             _host=host,
                             _port=cfg_data['hosts'][host]['port'],
                             _typ=cfg_data['hosts'][host]['type'].lower(),
                             _user=cfg_data['hosts'][host]['username'],
                             _password=None,
-                            _limit=cfg_data['hosts'][host]['runtime_limit'],
+                            _limit=convert_to_seconds(cfg_data['hosts'][host]['runtime_limit']),
                             _cmds=cfg_data['hosts'][host]['commands']
                         ))
                     else:
@@ -91,14 +84,14 @@ def load_config(_config_file):
 
                 # WMI based connections (Windows ONLY)
                 elif cfg_data['hosts'][host]['type'].lower() == 'windows':
-                    if ['username', 'password'] in cfg_data['hosts'][host]:
+                    if 'username' and 'password' in cfg_data['hosts'][host]:
                         cfg_hosts.append(Host(
                             _host=host,
                             _port=None,
                             _typ=cfg_data['hosts'][host]['type'].lower(),
                             _user=cfg_data['hosts'][host]['username'],
                             _password=cfg_data['hosts'][host]['password'],
-                            _limit=cfg_data['hosts'][host]['runtime_limit'],
+                            _limit=convert_to_seconds(cfg_data['hosts'][host]['runtime_limit']),
                             _cmds=None
                         ))
                     else:
@@ -229,7 +222,7 @@ class Host:
             return False
         elif self.typ == 'windows':
             try:
-                wmi.WMI(self.host, user=self.user, password=self.password)
+                wmi.WmiClientWrapper(username=self.user, password=self.password, host=self.host)
                 return True
             except Exception:
                 notify(1, 'host_connection_fail', 'Unable to access {} host!'.format(self.host), 'Unable to access {} host via WMI! Please check to make sure the host is reachable from the host running HawkUPS system. Please check logs for more info.'.format(self.host))
@@ -245,6 +238,7 @@ class Host:
                 ssh.connect(self.host, username=self.user, key_filename=cfg_data['general']['ssh_private_key'])
                 ssh.exec_command('; '.join(self.cmds))
                 ssh.close()
+                self.turned_off = True
                 notify(0, 'host_turned_off', 'Host {} has been turned off!'.format(self.host), 'Host {} has been powered down due to UPS\'s current runtime.'.format(self.host))
                 log(0, 'Host {} has been powered down due to UPS\'s current runtime'.format(self.host))
             except Exception:
@@ -252,10 +246,11 @@ class Host:
                 log(1, 'Unable to shutdown {} host due to unexpected error! Reason\n{}'.format(self.host, traceback.print_exc()))
         if self.typ == 'windows':
             try:
-                con = wmi.WMI(self.host, user=self.user, password=self.password)
+                con = wmi.WmiClientWrapper(username=self.user, password=self.password, host=self.host)
                 for cmd in self.cmds:
                     con.Win32_Process.Create(CommandLine=cmd)
                 con.close()
+                self.turned_off = True
                 notify(0, 'host_turned_off', 'Host {} has been turned off!'.format(self.host), 'Host {} has been powered down due to UPS\'s current runtime.'.format(self.host))
                 log(0, 'Host {} has been powered down due to UPS\'s current runtime'.format(self.host))
             except Exception:
@@ -268,6 +263,9 @@ class HostCheckup(threading.Thread):
     def __init__(self, _interval):
         threading.Thread.__init__(self)
         self.interval = _interval
+        self.metrics = {
+            'hawkups_host_status': prometheus_client.Gauge('hawkups_host_status', 'Host is reachable (0=False/1=True/2=PoweredOff)', ['host']),
+        }
     
     def run(self):
         while True:
@@ -276,15 +274,21 @@ class HostCheckup(threading.Thread):
             all_hosts_reachable = True
             try:
                 for host in cfg_hosts:
-                    if not host.is_alive():
-                        all_hosts_reachable = False
-                        prometheus_metrics['hawkups_host_status'].labels(host=host.host).set(0)
-                    else:
-                        if not host.is_accessible():
+                    if not host.turned_off:
+                        if not host.is_alive():
                             all_hosts_reachable = False
-                            prometheus_metrics['hawkups_host_status'].labels(host=host.host).set(0)
+                            if cfg_data['general']['prometheus_exporter']['enable']:
+                                self.metrics['hawkups_host_status'].labels(host=host.host).set(0)
                         else:
-                            prometheus_metrics['hawkups_host_status'].labels(host=host.host).set(1)
+                            if not host.is_accessible():
+                                all_hosts_reachable = False
+                                if cfg_data['general']['prometheus_exporter']['enable']:
+                                    self.metrics['hawkups_host_status'].labels(host=host.host).set(0)
+                            else:
+                                if cfg_data['general']['prometheus_exporter']['enable']:
+                                    self.metrics['hawkups_host_status'].labels(host=host.host).set(1)
+                    else:
+                        self.metrics['hawkups_host_status'].labels(host=host.host).set(2)
                 if all_hosts_reachable:
                     notify(2, 'unexpected_error', 'Error while trying check all hosts\' connection status!', 'Unexpected error while trying to check all hosts\' connection status! Please see logs for more info.')
                     log(0, 'All hosts has been checked and all of them are reachable!')
@@ -304,6 +308,16 @@ class UPSChecker(threading.Thread):
         self.interval = 1 # Interval every second
         self.notify_of_ups_status = False
         self.get_brand_model = False
+        self.metrics = {
+            'hawkups_ups_charge': prometheus_client.Guage('hawkups_ups_charge', 'Current UPS\'s battery charge in percentage (%)'),
+            'hawkups_ups_runtime': prometheus_client.Gauge('hawkups_ups_runtime', 'Current battery runtime in seconds.'),
+            'hawkups_ups_input_voltage': prometheus_client.Gauge('hawkups_ups_input_voltage', 'Current voltage input in volts.'),
+            'hawkups_ups_load': prometheus_client.Gauge('hawkups_ups_load', 'Current UPS load in percentage (%).'),
+            'hawkups_ups_realpower': prometheus_client.Gauge('hawkups_ups_realpower', 'UPS\'s realpower nominal. Used to calculate watts usage ((hawkups_ups_load / 100) * hawkups_ups_realpower) = watts'),
+            'hawkups_ups_status': prometheus_client.Gauge('hawkups_ups_status', 'Current status of the UPS (0=On Power Grid,1=On Battery Mode).'),
+            'hawkups_ups_brand': prometheus_client.Gauge('hawkups_ups_brand', 'Brand of the UPS', ['manufacturer']),
+            'hawkups_ups_model': prometheus_client.Gauge('hawkups_ups_model', 'Model of the UPS', ['model'])
+        }    
     
     def _is_ups_online(self):
         try:
@@ -315,15 +329,17 @@ class UPSChecker(threading.Thread):
             )
             output = process.stdout.readline().decode().strip()
             if output == 'OL':
-                prometheus_metrics['hawkups_ups_charge'].set(0)
+                if cfg_data['general']['prometheus_exporter']['enable']:
+                    self.metrics['hawkups_ups_charge'].set(0)
                 return True, True
             else:
-                prometheus_metrics['hawkups_ups_charge'].set(1)
+                if cfg_data['general']['prometheus_exporter']['enable']:
+                    self.metrics['hawkups_ups_charge'].set(1)
                 return True, False
         except Exception:
             notify(2, 'unexpected_error', 'Error on retrieving UPS status!', 'Unexpected error while trying to retrieve status from UPS via upsc! Please see logs for more info.')
             log(2, 'Unexpected error while trying to retrieve status from UPS via upsc! Reason:\n{}'.format(traceback.print_exc()))
-        return False, False
+        return False, True
     
     def _get_current_runtime(self):
         try:
@@ -334,7 +350,8 @@ class UPSChecker(threading.Thread):
                 stderr=subprocess.PIPE
             )
             output = int(process.stdout.readline().decode().strip())
-            prometheus_metrics['hawkups_ups_runtime'].set(output)
+            if cfg_data['general']['prometheus_exporter']['enable']:
+                self.metrics['hawkups_ups_runtime'].set(output)
             return output
         except Exception:
             notify(2, 'unexpected_error', 'Error while retrieving UPS runtime status!', 'Unexpected error while trying to retrieve runtime from the UPS via upsc! Please see logs for more info.')
@@ -343,33 +360,34 @@ class UPSChecker(threading.Thread):
 
     def _update_other_ups_statistics(self):
         try:
-            process = subprocess.Popen(
-                'upsc {}'.format(cfg_data['general']['nut_name']).split(' '), 
-                stdin=subprocess.PIPE, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE
-            )
-            for line in process.stdout.readline().decode().strip():
-                if line.startswith('ups.load'):
-                    output = int(line.replace('ups.load: '))
-                    prometheus_metrics['hawkups_ups_load'].set(output)
-                elif line.startswith('ups.realpower.nominal'):
-                    output = int(line.replace('ups.realpower.nominal: '))
-                    prometheus_metrics['hawkups_ups_realpower'].set(output)
-                elif line.startswith('battery.charge'):
-                    output = int(line.replace('battery.charge: '))
-                    prometheus_metrics['hawkups_ups_charge'].set(output)
-                elif line.startswith('input.voltage'):
-                    output = float(line.replace('input.voltage: '))
-                    prometheus_metrics['hawkups_ups_input_voltage'].set(output)
-                if not self.get_brand_model:
-                    if line.startswith('ups.mfr'):
-                        output = line.replace('ups.mfr: ')
-                        prometheus_metrics['hawkups_ups_brand'].labels(brand=output).set(1)
-                    elif line.startswith('ups.model'):
-                        output = line.replace('ups.model: ')
-                        prometheus_metrics['hawkups_ups_model'].labels(model=output).set(1)
-                    self.get_brand_model = True
+            if cfg_data['general']['prometheus_exporter']['enable']:
+                process = subprocess.Popen(
+                    'upsc {}'.format(cfg_data['general']['nut_name']).split(' '), 
+                    stdin=subprocess.PIPE, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE
+                )
+                for line in process.stdout.readline().decode().strip():
+                    if line.startswith('ups.load'):
+                        output = int(line.replace('ups.load: '))
+                        self.metrics['hawkups_ups_load'].set(output)
+                    elif line.startswith('ups.realpower.nominal'):
+                        output = int(line.replace('ups.realpower.nominal: '))
+                        self.metrics['hawkups_ups_realpower'].set(output)
+                    elif line.startswith('battery.charge'):
+                        output = int(line.replace('battery.charge: '))
+                        self.metrics['hawkups_ups_charge'].set(output)
+                    elif line.startswith('input.voltage'):
+                        output = float(line.replace('input.voltage: '))
+                        self.metrics['hawkups_ups_input_voltage'].set(output)
+                    if not self.get_brand_model:
+                        if line.startswith('ups.mfr'):
+                            output = line.replace('ups.mfr: ')
+                            self.metrics['hawkups_ups_brand'].labels(brand=output).set(1)
+                        elif line.startswith('ups.model'):
+                            output = line.replace('ups.model: ')
+                            self.metrics['hawkups_ups_model'].labels(model=output).set(1)
+                        self.get_brand_model = True
         except Exception:
             notify(2, 'unexpected_error', 'Error while retrieving other UPS statistics!', 'Unexpected error while trying to retrieve other statistics from UPS via upsc! Please see logs for more info.')
             log(2, 'Unexpected error while trying to retrieve other statistics from UPS via upsc! Reason:\n{}'.format(traceback.print_exc()))
@@ -412,14 +430,14 @@ if __name__ == '__main__':
     load_config(sys.argv[1])
     log(0, 'Configuration loaded!')
     log(0, 'Starting auto host checker...')
-    HostCheckup(int(cfg_data['general']['host_checkup']['interval'])).start()
+    HostCheckup(convert_to_seconds(cfg_data['general']['host_checkup']['interval'])).start()
     log(0, 'Auto host checker started!')
     log(0, 'Starting auto UPS checker...')
     UPSChecker().start()
     log(0, 'Auto UPS checker started!')
-    if cfg_data['general']['promtheus_exporter']['enable']:
+    if cfg_data['general']['prometheus_exporter']['enable']:
         log(0, 'Starting Prometheus listener...')
         log(0, 'Running...')
-        prometheus_client.start_http_server(int(cfg_data['general']['promtheus_exporter']['port']), addr='0.0.0.0')
+        prometheus_client.start_http_server(int(cfg_data['general']['prometheus_exporter']['port']), addr='0.0.0.0')
     else:
         log(0, 'Running...')
