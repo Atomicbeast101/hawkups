@@ -68,7 +68,7 @@ def load_config(_config_file):
         for host in cfg_data['hosts']:
             if 'type' and 'runtime_limit' in cfg_data['hosts'][host]:
                 # SSH based connections (Linux/Nimble/ESXi/Synology/etc...)
-                if cfg_data['hosts'][host]['type'].lower() == 'unix':
+                if cfg_data['hosts'][host]['type'].lower() == 'linux':
                     if 'port' and 'username' and 'commands' in cfg_data['hosts'][host]:
                         cfg_hosts.append(Host(
                             _host=host,
@@ -214,11 +214,12 @@ class Host:
         if self.typ == 'linux':
             try:
                 ssh = paramiko.SSHClient()
-                ssh.connect(self.host, username=self.user, key_filename=cfg_data['general']['ssh_private_key'])
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(self.host, username=self.user)
                 return True
             except Exception:
                 notify(1, 'host_connection_fail', 'Unable to access {} host!'.format(self.host), 'Unable to access {} host via SSH! Please check to make sure the host is reachable from the host running HawkUPS system. Please check logs for more info.'.format(self.host))
-                log(1, 'Unable to access {} host via SSH! Reason:\n{}'.format(self.host, traceback.print_exc()))
+                log(1, 'Unable to access {} host via SSH! Please check to make sure the host is reachable from the host running HawkUPS system! Reason:\n{}'.format(self.host, traceback.print_exc()))
             return False
         elif self.typ == 'windows':
             try:
@@ -226,7 +227,7 @@ class Host:
                 return True
             except Exception:
                 notify(1, 'host_connection_fail', 'Unable to access {} host!'.format(self.host), 'Unable to access {} host via WMI! Please check to make sure the host is reachable from the host running HawkUPS system. Please check logs for more info.'.format(self.host))
-                log(1, 'Unable to access {} host via WMI! Reason:\n{}'.format(self.host, traceback.print_exc()))
+                log(1, 'Unable to access {} host via WMI! Please check to make sure the host is reachable from the host running HawkUPS system! Reason:\n{}'.format(self.host, traceback.print_exc()))
             return False
         else:
             log(2, 'Unrecognized host type for {}!'.format(self.host))
@@ -235,7 +236,8 @@ class Host:
         if self.typ == 'linux':
             try:
                 ssh = paramiko.SSHClient()
-                ssh.connect(self.host, username=self.user, key_filename=cfg_data['general']['ssh_private_key'])
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(self.host, username=self.user)
                 ssh.exec_command('; '.join(self.cmds))
                 ssh.close()
                 self.turned_off = True
@@ -309,7 +311,7 @@ class UPSChecker(threading.Thread):
         self.notify_of_ups_status = False
         self.get_brand_model = False
         self.metrics = {
-            'hawkups_ups_charge': prometheus_client.Guage('hawkups_ups_charge', 'Current UPS\'s battery charge in percentage (%)'),
+            'hawkups_ups_charge': prometheus_client.Gauge('hawkups_ups_charge', 'Current UPS\'s battery charge in percentage (%)'),
             'hawkups_ups_runtime': prometheus_client.Gauge('hawkups_ups_runtime', 'Current battery runtime in seconds.'),
             'hawkups_ups_input_voltage': prometheus_client.Gauge('hawkups_ups_input_voltage', 'Current voltage input in volts.'),
             'hawkups_ups_load': prometheus_client.Gauge('hawkups_ups_load', 'Current UPS load in percentage (%).'),
