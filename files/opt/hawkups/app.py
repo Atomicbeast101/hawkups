@@ -331,7 +331,7 @@ class UPSChecker(threading.Thread):
                 stderr=subprocess.PIPE
             )
             output = process.stdout.readline().decode().strip()
-            if output == 'OL':
+            if output == 'OL' or output == 'OL CHRG':
                 if cfg_data['general']['prometheus_exporter']['enable']:
                     self.metrics['hawkups_ups_charge'].set(0)
                 return True, True
